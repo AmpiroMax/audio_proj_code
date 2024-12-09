@@ -1,5 +1,4 @@
 import os
-os.environ['HF_HOME'] = "/home/mpatratskiy/work/audio_proj/models"
 
 import json
 import typing as tp
@@ -9,6 +8,8 @@ import torchaudio
 from einops import rearrange
 import clip
 from PIL import Image
+
+from transformers import ViTModel, ViTImageProcessor
 
 from huggingface_hub import hf_hub_download
 
@@ -78,6 +79,58 @@ class CLIPImageConditioner(Conditioner):
         )
 
         return embeddings, attention_mask
+    
+
+class ViTImageConditioner(Conditioner):
+    def __init__(
+        self,
+        output_dim: int,
+        vit_model_name: str = "google/vit-base-patch16-224",
+        max_length: int = 128,
+    ):
+        super().__init__(512, output_dim)
+        super().to()
+        self.max_length = max_length
+        self.processor = ViTImageProcessor.from_pretrained(vit_model_name)
+        self.vit = ViTModel.from_pretrained(vit_model_name)
+        # self.clip, self.preprocess = clip.load(clip_model_name, device=device)
+        self.proj_out = torch.nn.Linear(197, max_length)
+        # Set requires_grad to False for all parameters in the model
+        for param in self.vit.parameters():
+            param.requires_grad = False
+
+        # Set requires_grad to True for the projection layer
+        for param in self.proj_out.parameters():
+            param.requires_grad = True
+            
+    def forward(self, images: list[Image], device: str):
+        self.vit.to(device)
+        self.proj_out.to(device)
+
+        if isinstance(images, str):
+            print("="*30, "Loading image", "="*30)
+            images = Image.open(images)
+        elif isinstance(images, list) and isinstance(images[0], str):
+            print("="*30, "Loading images", "="*30)
+            images = [Image.open(image) for image in images]
+            
+        with torch.no_grad():
+            inputs = self.processor(images=images, return_tensors="pt")
+            inputs = {key: (item.to(device) if torch.is_tensor(item) else item) for key, item in inputs.items()}
+            outputs = self.vit(**inputs)
+        
+        image_features = outputs.last_hidden_state
+
+        image_features = image_features.transpose(1, 2)
+        embeddings = self.proj_out(image_features)
+        embeddings = embeddings.transpose(1, 2)
+
+        # hope full true means that all of the "tokens" will be encounted
+        attention_mask = torch.ones(
+            (embeddings.shape[0], embeddings.shape[1]), dtype=torch.bool, device=device
+        )
+
+        return embeddings, attention_mask
 
 
 def create_multi_conditioner_from_conditioning_config(
@@ -106,6 +159,8 @@ def create_multi_conditioner_from_conditioning_config(
 
         if conditioner_type == "clip":
             conditioners[id] = CLIPImageConditioner(**conditioner_config)
+        elif conditioner_type == "vit":
+            conditioners[id] = ViTImageConditioner(**conditioner_config)
         elif conditioner_type == "number":
             conditioners[id] = NumberConditioner(**conditioner_config)
         elif conditioner_type == "pretransform":
@@ -214,9 +269,10 @@ def get_pretrained_model(name: str, model_config_path: str):
 
 def main():
     model, model_config = get_pretrained_model(
-        "stabilityai/stable-audio-open-1.0", "/home/mpatratskiy/work/audio_proj/src/configs/model_image_cond_config.json"
+        "stabilityai/stable-audio-open-1.0",
+        # "./configs/model_image_cond_config.json"
+        "./configs/model_image_cond_vit.json"
     )
-    
 
     device = "cuda:0"
 
@@ -225,10 +281,10 @@ def main():
     sample_rate = model_config["sample_rate"]
     sample_size = model_config["sample_size"]
 
-    image = Image.open("/home/mpatratskiy/work/audio_proj/src/data/dataset/images/vivaldi_autumn_chunk_2.jpeg")
+    image = Image.open("../data/test/anime_autumn.jpeg")
     conditioning = [
         {
-            "images": [image],
+            "prompt": [image],
             "seconds_start": 0,
             "seconds_total": 10,
         }
