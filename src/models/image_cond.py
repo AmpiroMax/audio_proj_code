@@ -1,6 +1,4 @@
 import os
-hf_token = "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"
-os.environ['HF_TOKEN'] = hf_token
 os.environ['HF_HOME'] = "/home/mpatratskiy/work/audio_proj/models"
 
 import json
