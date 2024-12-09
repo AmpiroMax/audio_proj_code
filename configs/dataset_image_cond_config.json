@@ -1,0 +1,11 @@
+{
+    "dataset_type": "audio_dir",
+    "datasets": [
+        {
+            "id": "vivaldy",
+            "path": "/home/mpatratskiy/work/audio_proj/audio_proj_code/data/music",
+            "custom_metadata_module": "/home/mpatratskiy/work/audio_proj/audio_proj_code/src/data/metadata.py"
+        }
+    ],
+    "random_crop": false
+}
